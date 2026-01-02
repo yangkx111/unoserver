@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 import time
-import warnings
 
 from importlib import metadata
 from xmlrpc.client import ServerProxy
@@ -67,6 +66,11 @@ class UnoClient:
             except ConnectionError as e:
                 logger.debug(f"Error {e.strerror}, waiting...")
                 retries -= 1
+                # If set, run the restart command. Generally it be a script.
+                if retries == 3:
+                    restart_cmd = os.getenv("RESTART_UNOSERVER_CMD", "")
+                    if restart_cmd:
+                        os.system(restart_cmd)
                 if retries > 0:
                     time.sleep(sleep)
                     logger.debug("Retrying...")
@@ -83,7 +87,6 @@ class UnoClient:
         filter_options=[],
         update_index=True,
         infiltername=None,
-        password=None,
     ):
         """Converts a file from one type to another
 
@@ -98,13 +101,7 @@ class UnoClient:
 
         filtername: The name of the export filter to use for conversion. If None, it is auto-detected.
 
-        filter_options: A list of output filter options as strings, in a "OptionName=Value" format.
-
         update_index: Updates the index before conversion
-
-        infiltername: The name of the input filter, ie "writer8", "PowerPoint 3", etc.
-
-        password: The password for the input file, if it is password protected.
         """
         if inpath is None and indata is None:
             raise RuntimeError("Nothing to convert.")
@@ -164,7 +161,6 @@ class UnoClient:
                 filter_options,
                 update_index,
                 infiltername,
-                password,
             )
             if result is not None:
                 # We got the file back over xmlrpc:
@@ -268,24 +264,14 @@ class UnoClient:
             else:
                 logger.info(f"Saved to {outpath}.")
 
-    def server_info(self):
-        with ServerProxy(
-            f"{self.protocol}://{self.server}:{self.port}", allow_none=True
-        ) as proxy:
-            logger.info("Connecting.")
-            logger.debug(f"Host: {self.server} Port: {self.port}")
-            info = self._connect(proxy, retries=1)
-            print(f"Unoserver {info['unoserver']}")
-            print(f"API version {info['api']}")
-
 
 def converter_main():
     parser = argparse.ArgumentParser("unoconvert")
     parser.add_argument(
-        "infile", help="The path to the file to be converted (use - for stdin)."
+        "infile", help="The path to the file to be converted (use - for stdin)"
     )
     parser.add_argument(
-        "outfile", help="The path to the converted file (use - for stdout)."
+        "outfile", help="The path to the converted file (use - for stdout)"
     )
     parser.add_argument(
         "-v",
@@ -296,29 +282,20 @@ def converter_main():
     )
     parser.add_argument(
         "--convert-to",
-        help="The file type/extension of the output file (ex pdf). Required when using stdout.",
+        help="The file type/extension of the output file (ex pdf). Required when using stdout",
     )
     parser.add_argument(
         "--input-filter",
-        help="The LibreOffice input filter to use (ex 'writer8'), if autodetect fails.",
+        help="The LibreOffice input filter to use (ex 'writer8'), if autodetect fails",
     )
     parser.add_argument(
         "--output-filter",
+        "--filter",
         default=None,
         help="The export filter to use when converting. It is selected automatically if not specified.",
     )
     parser.add_argument(
-        "--filter",
-        default=None,
-        help="The --filter option is deprecated, please use --output-filter.",
-    )
-    parser.add_argument(
         "--filter-options",
-        default=[],
-        action="append",
-        help="Deprecated, please use --filter-option instead.",
-    )
-    parser.add_argument(
         "--filter-option",
         default=[],
         action="append",
@@ -338,14 +315,14 @@ def converter_main():
     )
     parser.set_defaults(update_index=True)
     parser.add_argument(
-        "--host", default="127.0.0.1", help="The host the server runs on."
+        "--host", default="127.0.0.1", help="The host the server runs on"
     )
     parser.add_argument("--port", default="2003", help="The port used by the server")
     parser.add_argument(
         "--protocol",
         choices=["http", "https"],
         default="http",
-        help="What protocol to use to connect to the server (defaults to http).",
+        help="The protocol used by the server",
     )
     parser.add_argument(
         "--host-location",
@@ -374,11 +351,7 @@ def converter_main():
         "-f",
         "--logfile",
         dest="logfile",
-        help="Write logs to a file (defaults to stderr).",
-    )
-    parser.add_argument(
-        "--password",
-        help="The password to open the documents, if they are password protected.",
+        help="Write logs to a file (defaults to stderr)",
     )
     args = parser.parse_args()
 
@@ -413,41 +386,15 @@ def converter_main():
     else:
         indata = None
 
-    filter_options = args.filter_option
-    if args.filter_options:
-        filter_options.extend(args.filter_options)
-        # Standard deprecation warning, for those looking for that:
-        warnings.warn(
-            DeprecationWarning(
-                "--filter-options is deprecated, please use --filter-option"
-            )
-        )
-        # And also to the logs, for those who read logs:
-        logger.warning("--filter-options is deprecated, please use --filter-option")
-
-    if args.output_filter:
-        output_filter = args.output_filter
-    elif args.filter:
-        output_filter = args.filter
-        # Standard deprecation warning, for those looking for that:
-        warnings.warn(
-            DeprecationWarning("--filter is deprecated, please use --output-filter")
-        )
-        # And also to the logs, for those who read logs:
-        logger.warning("--filter is deprecated, please use --output-filter")
-    else:
-        output_filter = None
-
     result = client.convert(
         inpath=args.infile,
         indata=indata,
         outpath=args.outfile,
         convert_to=args.convert_to,
-        filtername=output_filter,
-        filter_options=filter_options,
+        filtername=args.output_filter,
+        filter_options=args.filter_options,
         update_index=args.update_index,
         infiltername=args.input_filter,
-        password=args.password,
     )
 
     if args.outfile is None:
@@ -458,15 +405,15 @@ def comparer_main():
     parser = argparse.ArgumentParser("unocompare")
     parser.add_argument(
         "oldfile",
-        help="The path to the older file to be compared (use - for stdin).",
+        help="The path to the original file to be compared with the modified one (use - for stdin)",
     )
     parser.add_argument(
         "newfile",
-        help="The path to the newer file to be compared (use - for stdin).",
+        help="The path to the modified file to be compared with the original one (use - for stdin)",
     )
     parser.add_argument(
         "outfile",
-        help="The path to the result of the comparison and converted file (use - for stdout).",
+        help="The path to the result of the comparison and converted file (use - for stdout)",
     )
     parser.add_argument(
         "-v",
@@ -477,17 +424,17 @@ def comparer_main():
     )
     parser.add_argument(
         "--file-type",
-        help="The file type/extension of the result file (ex pdf). Required when using stdout.",
+        help="The file type/extension of the result file (ex pdf). Required when using stdout",
     )
     parser.add_argument(
-        "--host", default="127.0.0.1", help="The host the server run on."
+        "--host", default="127.0.0.1", help="The host the server run on"
     )
-    parser.add_argument("--port", default="2003", help="The port used by the server.")
+    parser.add_argument("--port", default="2003", help="The port used by the server")
     parser.add_argument(
         "--protocol",
         choices=["http", "https"],
         default="http",
-        help="What protocol to use to connect to the server (defaults to http).",
+        help="The protocol used by the server",
     )
     parser.add_argument(
         "--host-location",
@@ -516,7 +463,7 @@ def comparer_main():
         "-f",
         "--logfile",
         dest="logfile",
-        help="Write logs to a file (defaults to stderr).",
+        help="Write logs to a file (defaults to stderr)",
     )
     args = parser.parse_args()
 
@@ -571,69 +518,3 @@ def comparer_main():
 
     if args.outfile is None:
         sys.stdout.buffer.write(result)
-
-
-def ping_main():
-    parser = argparse.ArgumentParser("unoping")
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        help="Display version and exit.",
-        version=f"{parser.prog} {__version__}",
-    )
-    parser.add_argument(
-        "--host", default="127.0.0.1", help="The host the server run on."
-    )
-    parser.add_argument("--port", default="2003", help="The port used by the server.")
-    parser.add_argument(
-        "--protocol",
-        choices=["http", "https"],
-        default="http",
-        help="What protocol to use to connect to the server (defaults to http).",
-    )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--verbose",
-        action="store_true",
-        dest="verbose",
-        help="Increase informational output to logs.",
-    )
-    group.add_argument(
-        "--quiet",
-        action="store_true",
-        dest="quiet",
-        help="Decrease informational output to logs.",
-    )
-    parser.add_argument(
-        "-f",
-        "--logfile",
-        dest="logfile",
-        help="Write logs to a file (defaults to stderr).",
-    )
-    args = parser.parse_args()
-
-    if args.verbose:
-        log_args = {"level": logging.DEBUG}
-    elif args.quiet:
-        log_args = {"level": logging.CRITICAL}
-    else:
-        log_args = {"level": logging.INFO}
-
-    if args.logfile:
-        log_args["filename"] = args.logfile
-
-        def new_excepthook(*exc):
-            logger.exception("Critical error", exc_info=exc)
-
-        sys.excepthook = new_excepthook
-
-    logging.basicConfig(**log_args)
-
-    client = UnoClient(args.host, args.port, "auto", args.protocol)
-    try:
-        client.server_info()
-        return 0
-    except ConnectionError:
-        logger.error("Could not connect to server")
-        return -1

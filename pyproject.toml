@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unoserver"
-version = "3.7.dev0"
+version = "3.5.dev0"
 description = "A server for file conversions with Libre Office"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -25,6 +25,12 @@ license = {text = "MIT"}
 urls = {Homepage = "https://github.com/unoconv/unoserver"}
 dynamic = ["readme"]
 requires-python = ">= 3.8"
+dependencies = [
+    "fastapi>=0.70.0",
+    "uvicorn[standard]>=0.15.0",
+    "python-multipart",
+    "requests"
+]
 
 [project.optional-dependencies]
 devenv = [
@@ -41,7 +47,7 @@ devenv = [
 unoserver = "unoserver.server:main"
 unoconvert = "unoserver.client:converter_main"
 unocompare = "unoserver.client:comparer_main"
-unoping = "unoserver.client:ping_main"
+unoserver-api = "unoserver.api:main"
 
 [tool.setuptools]
 packages = ["unoserver"]
